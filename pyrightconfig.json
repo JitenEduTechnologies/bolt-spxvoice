@@ -1,0 +1,17 @@
+{
+  "include": [
+    "api"
+  ],
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__",
+    ".venv",
+    "typings"
+  ],
+  "extraPaths": [
+    ".",
+    "typings"
+  ],
+  "typeCheckingMode": "basic"
+}
+

@@ -1,0 +1,55 @@
+services:
+  postgres-test:
+    image: pgvector/pgvector:pg17
+    container_name: spx-phase7-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: spx_phase7_test
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "5435:5432"
+    volumes:
+      - phase7_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d spx_phase7_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    networks:
+      - phase7-network
+
+  redis-test:
+    image: redis:7
+    container_name: spx-phase7-redis
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "6381:6379"
+    command: >
+      redis-server --requirepass redissecret --appendonly yes --maxmemory 512mb --maxmemory-policy noeviction
+    volumes:
+      - phase7_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redissecret", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    networks:
+      - phase7-network
+
+volumes:
+  phase7_postgres_data:
+  phase7_redis_data:
+
+networks:
+  phase7-network:
+    driver: bridge
+

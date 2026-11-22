@@ -1,0 +1,302 @@
+---
+title: Add to Website
+description: Add your SPX Voice agent to any website so visitors can talk to it.
+tag: "NEW"
+---
+
+### How to add it
+
+Add your voice agent to any website using the Configure Widget dialog in your agent's settings.
+
+Step 1: Open the agent settings by clicking the gear icon in the top-right of the agent editor.
+
+Screenshot omitted from the sanitized engineering handoff.
+
+Step 2: Scroll to the **Add to Website** section and click **Configure Widget**.
+
+Screenshot omitted from the sanitized engineering handoff.
+
+Step 3: Enable embedding, add your website's domain to **Allowed Domains**, choose **Floating Widget**, **Inline Component**, or **Headless (Bring Your Own UI)**, customize the button (position, color, text) if applicable, and click **Save Configurations**.
+
+Screenshot omitted from the sanitized engineering handoff.
+
+Step 4: Copy the generated embed code and paste it into your web page to test your agent.
+
+Screenshot omitted from the sanitized engineering handoff.
+
+## Embed modes
+
+| Mode                  | What it renders                                                                                    | When to use                                                                                          |
+| --------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| **Floating Widget**   | A pill-shaped CTA button anchored to a corner of the page.                                         | You want a turn-key chat-bubble experience that doesn't disturb your existing layout.                |
+| **Inline Component**  | A panel rendered inside a `<div id="spx-voice-inline-container">` that you place in your page.        | You want the agent embedded in a specific section (landing-page hero, support tab, etc.).            |
+| **Headless**          | No UI. Only the audio pipeline plus a JavaScript API on `window.SPXVoiceWidget`.                     | You want full control over the UI — your own buttons, design system, framework state, animations.    |
+
+## Prerequisites
+
+These apply to all three modes:
+
+- Serve your page over **HTTPS** or from `http://localhost`. Browsers refuse microphone access on plain HTTP origins or `file://`.
+- If you set **Allowed Domains** in the dashboard, include your test origin (e.g. `localhost`) — otherwise the widget's config and signaling requests are rejected. Leave the list empty to allow all domains.
+- The embed snippet you copy from the dashboard is a single `<script>` tag that loads `spx-voice-widget.js` **asynchronously**. The widget auto-initializes once it loads and exposes `window.SPXVoiceWidget`. Code that registers callbacks must wait for the widget to be available.
+
+## Floating Widget
+
+Screenshot omitted from the sanitized engineering handoff.
+
+Renders a pill-shaped button (microphone icon + text) anchored to a corner of the page. Clicking it starts a call; clicking again ends it. The button auto-updates its label and color across the call lifecycle: configured text → "Connecting…" → "End Call" → "Retry" on failure.
+
+Configure **Button Text**, **Button Color**, and **Position** (top/bottom + left/right) from the dashboard.
+
+The host page writes no JavaScript — pasting the embed snippet is the entire integration. If you want to subscribe to call lifecycle events (e.g. analytics), see [Lifecycle callbacks](#lifecycle-callbacks-all-modes) below
+
+## Inline Component
+
+Screenshot omitted from the sanitized engineering handoff.
+
+Renders a panel (status icon + status text + CTA button) inside a `<div>` you place in your page. Status changes update the panel in place.
+
+Configure **Button Text**, **Button Color**, and **Call to Action Text** from the dashboard.
+
+### Plain HTML
+
+Place a container `<div>` where you want the widget to render. The widget auto-attaches to it.
+
+```html
+<!-- Paste the SPX Voice embed snippet from the dashboard somewhere on the page -->
+<div id="spx-voice-inline-container"></div>
+```
+
+### React
+
+Because React mounts after the widget script may have already loaded, integrate via `initInline` on first mount and `refresh` on remount. Poll for `window.SPXVoiceWidget` to handle the async script load.
+
+```tsx
+import { useEffect } from 'react';
+
+declare global {
+  interface Window {
+    SPXVoiceWidget?: {
+      initInline: (options: { container: HTMLElement }) => void;
+      refresh: () => void;
+      getState: () => { isInitialized: boolean };
+    };
+  }
+}
+
+export function Assistant() {
+  useEffect(() => {
+    let retries = 0;
+    const tryInit = () => {
+      const container = document.getElementById('spx-voice-inline-container');
+      if (window.SPXVoiceWidget && container) {
+        const { isInitialized } = window.SPXVoiceWidget.getState();
+        if (isInitialized) window.SPXVoiceWidget.refresh();
+        else window.SPXVoiceWidget.initInline({ container });
+      } else if (retries++ < 50) {
+        setTimeout(tryInit, 100);
+      }
+    };
+    tryInit();
+  }, []);
+
+  return <div id="spx-voice-inline-container" />;
+}
+```
+
+## Headless Mode
+
+Screenshot omitted from the sanitized engineering handoff.
+
+In Headless mode the widget injects no UI of its own. You render whatever buttons, banners, or in-call indicators you want, and call the JavaScript API to start and end calls.
+
+### JavaScript API
+
+| Method / Callback                              | Description                                                                                                                                                  |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `window.SPXVoiceWidget.start()`                  | Begin a voice call. Must be called from inside a user-gesture handler (e.g. `click`) so the browser grants microphone access.                                |
+| `window.SPXVoiceWidget.end()`                    | End the active call.                                                                                                                                         |
+| `window.SPXVoiceWidget.onCallStart(cb)`          | Fires when `start()` is invoked (status `connecting`). No payload.                                                                                           |
+| `window.SPXVoiceWidget.onCallConnected(cb)`      | Fires when the WebRTC connection is established. Payload: `{ agentId, workflowRunId, token }`.                                                               |
+| `window.SPXVoiceWidget.onCallDisconnected(cb)`   | Fires only if the call had connected, when teardown runs. Payload: `{ agentId, workflowRunId, token, durationSeconds }`.                                     |
+| `window.SPXVoiceWidget.onCallEnd(cb)`            | Fires whenever the call session is torn down (including failed-to-connect attempts). No payload.                                                             |
+| `window.SPXVoiceWidget.onStatusChange(cb)`       | Fires on every status change. Callback receives `(status, text, subtext)`. Status values: `idle`, `connecting`, `connected`, `failed`.                       |
+| `window.SPXVoiceWidget.onError(cb)`              | Fires on errors (mic permission denied, server error, etc.). Callback receives an `Error` object.                                                            |
+
+All `on*` setters are single-listener — calling the same one again replaces the previous handler.
+
+<Note>
+**About timing.** The widget script loads asynchronously, so `window.SPXVoiceWidget` may not exist at the moment your inline `<script>` first runs. The examples below assume `window.SPXVoiceWidget` is already available when registration runs. To guarantee that:
+
+- **Vanilla JS:** wrap your registration code in `window.addEventListener('load', () => { /* register here */ })`.
+- **React:** inside `useEffect`, register immediately if `document.readyState === 'complete'`, otherwise add a one-time `window.load` listener that registers on fire.
+- **Click handlers** that call `start()` / `end()` don't need a guard — by the time a user clicks, the widget has long since loaded.
+</Note>
+
+### Vanilla JS
+
+```html
+<button id="talk-btn">Talk to AI</button>
+
+<script>
+  let callStatus = 'idle';
+  const btn = document.getElementById('talk-btn');
+
+  function render() {
+    btn.textContent =
+      callStatus === 'connected' ? 'End Call'
+      : callStatus === 'connecting' ? 'Connecting…'
+      : callStatus === 'failed' ? 'Retry'
+      : 'Talk to AI';
+  }
+
+  window.SPXVoiceWidget.onStatusChange((status) => {
+    callStatus = status;
+    render();
+  });
+
+  window.SPXVoiceWidget.onError((err) => {
+    console.error('SPX Voice error:', err.message);
+  });
+
+  btn.addEventListener('click', () => {
+    if (callStatus === 'connected' || callStatus === 'connecting') {
+      window.SPXVoiceWidget.end();
+    } else {
+      window.SPXVoiceWidget.start();
+    }
+  });
+</script>
+```
+
+### React + TypeScript
+
+```tsx
+import { useEffect, useState } from 'react';
+
+type CallStatus = 'idle' | 'connecting' | 'connected' | 'failed';
+
+declare global {
+  interface Window {
+    SPXVoiceWidget: {
+      start: () => void;
+      end: () => void;
+      onStatusChange: (cb: (status: CallStatus, text?: string, subtext?: string) => void) => void;
+      onError: (cb: (err: Error) => void) => void;
+    };
+  }
+}
+
+export function TalkButton() {
+  const [status, setStatus] = useState<CallStatus>('idle');
+
+  useEffect(() => {
+    window.SPXVoiceWidget.onStatusChange((s) => setStatus(s));
+    window.SPXVoiceWidget.onError((err) => console.error('SPX Voice error:', err.message));
+  }, []);
+
+  const isLive = status === 'connected' || status === 'connecting';
+  const label = { idle: 'Talk to AI', connecting: 'Connecting…', connected: 'End Call', failed: 'Retry' }[status];
+
+  return (
+    <button onClick={() => (isLive ? window.SPXVoiceWidget.end() : window.SPXVoiceWidget.start())}>
+      {label}
+    </button>
+  );
+}
+```
+
+<Note>
+`start()` must run inside a real user-gesture handler (`click`, `touchend`, etc.). Browsers refuse to grant microphone access to scripts that request it outside of one — calling `start()` from a `setTimeout` or on page load will fail with a permission error.
+</Note>
+
+## Lifecycle callbacks (all modes)
+
+The `on*` callbacks in the [Headless JavaScript API](#javascript-api) work in **all three embed modes**, not just Headless. Use them for analytics or to trigger UI in the host page even when the widget is rendering its own UI (Floating or Inline).
+
+```js
+window.SPXVoiceWidget.onCallConnected(({ agentId, workflowRunId }) => {
+  analytics.track('voice_call_started', { agentId, workflowRunId });
+});
+
+window.SPXVoiceWidget.onCallDisconnected(({ workflowRunId, durationSeconds }) => {
+  analytics.track('voice_call_ended', { workflowRunId, durationSeconds });
+});
+```
+
+`onCallConnected` and `onCallDisconnected` only fire when the call actually establishes a media connection — failed-to-connect attempts (e.g. denied mic, network failure) don't trigger them, so analytics stay clean.
+
+## Allowed Domains and Origin Validation
+
+To protect your agent from unauthorized use on third-party websites, SPX Voice validates the `Origin` and `Referer` headers of all widget initialization and signaling requests.
+
+- **Configure Allowed Domains:** In your agent settings under **Add to Website**, add the exact domains authorized to host the widget (e.g. `example.com`, `app.example.com`).
+- **Wildcard Subdomains:** Use `*.example.com` to match any subdomain of your domain.
+- **Localhost Testing:** For local development, add `localhost` or `http://localhost:3000` to the allowed domains list.
+- **Unrestricted Access:** Leaving the allowed domains list empty permits embedding across any domain (recommended only for public demos or staging).
+- **Tenant Isolation:** Embed tokens are strictly scoped to your organization. Requests from unauthorized origins are rejected with an HTTP 403 Forbidden response.
+
+## Microphone Permissions and HTTPS
+
+WebRTC voice streaming requires active browser microphone access. Modern browsers enforce strict security rules:
+
+- **HTTPS Required:** Browsers only expose `navigator.mediaDevices.getUserMedia` on secure origins (`https://`) or `localhost`. Plain HTTP origins or `file:///` paths will immediately throw a permission security error.
+- **User Gesture Requirement:** In Headless mode, `window.SPXVoiceWidget.start()` must be called synchronously from a trusted user gesture (e.g., a button `click` or `touchend` event). Automated calls initiated on page load or from asynchronous timers (`setTimeout`) will be blocked by browser autoplay and security policies.
+- **Permission Denied Handling:** If the user denies microphone permission, `window.SPXVoiceWidget.onError(callback)` fires with an error containing `name: 'NotAllowedError'` or `'PermissionDeniedError'`. Always present a clear user prompt asking them to grant microphone access in their browser address bar.
+
+## Website Lead Capture and CRM Tracking
+
+SPX Voice automatically connects website widget sessions with your business CRM and AI lead-intelligence pipeline.
+
+### Context Variables and Attribution
+When embedding the widget, you can pass custom context parameters via the `data-voice-agent-context` attribute or the `context_variables` dictionary:
+
+```html
+<script 
+  src="https://app.spxvoice.com/embed/voice-agent-widget.js?token=YOUR_TOKEN"
+  data-voice-agent-context='{"landing_page":"/pricing","utm_source":"google_ads","utm_campaign":"q4_growth","visitor_name":"Priya Sharma","visitor_phone":"+919876543210","consent":true}'
+  async>
+</script>
+```
+
+### Captured Data Fields
+For each authorized widget interaction, the system captures and stores:
+- **Session Identifiers:** `business_id`, `workflow_id`, `session_id`, and `workflow_run_id`.
+- **Traffic Attribution:** Origin domain, landing page URL, referrer, and UTM campaign parameters (`utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content`).
+- **Session Lifecycle:** `widget_opened`, `session_started`, `session_completed`, and client-side error telemetry.
+- **Lead Profile & Contact:** Name, normalized phone number, email voluntarily supplied with affirmative consent.
+- **Lead Intelligence:** Automated Hot / Warm / Cold qualification with explainable 0–100 scoring based on customer requirements, budget, timeline, and buying signals.
+- **Deduplication:** Automatic 24-hour idempotent deduplication prevents duplicate CRM leads when a visitor refreshes the page or retries a call.
+
+## Model and Voice Engine Selection
+
+SPX Voice supports three distinct voice architecture modes depending on latency, intelligence, and budget requirements:
+
+1. **STANDARD Mode (Gemini Live Native Speech-to-Speech):**
+   - **Provider:** `google_realtime`
+   - **Default Model:** `gemini-3.1-flash-live-preview`
+   - **Voice:** `Kore` (natural, low latency native audio)
+   - **Best For:** Ultra-responsive conversational agents with sub-second turn transitions and interruption handling. Does not require separate STT/TTS API keys.
+
+2. **PREMIUM Mode (Multi-Provider Pipeline):**
+   - **Pipeline:** Deepgram Nova-2 STT → DeepSeek / Groq / OpenAI LLM → Cartesia Sonic TTS
+   - **Best For:** Highly customized brand voices, complex reasoning chains, or specialized enterprise telephony.
+   - **Multilingual Support:** High-accuracy transcription and pronunciation for English, Telugu, Hindi, and code-switched Indian languages.
+
+3. **BUDGET Mode (Prerecorded IVR + Intelligent Escalation):**
+   - **Pipeline:** Cached WAV audio greetings and fixed prompt menus with dynamic fallback to Gemini Live.
+   - **Best For:** High-volume inbound screening with near-zero per-minute token costs on standard navigation turns.
+
+### Note on `google / gemini-2.0-flash`
+In the Model Overrides panel, `google / gemini-2.0-flash` represents the default model for Google's traditional text LLM provider (used in STT → LLM → TTS pipelines). For native realtime voice conversations, the realtime engine uses `google_realtime` with `gemini-3.1-flash-live-preview`.
+
+## Troubleshooting and FAQs
+
+| Problem | Cause | Solution |
+| :--- | :--- | :--- |
+| **HTTP 403 Domain Not Allowed** | Host origin is not in the allowed domains list | Add your domain (or `localhost` for development) to **Allowed Domains** in Agent Settings → Add to Website. |
+| **Microphone Permission Denied** | Browser blocked mic or page is served over HTTP | Serve page over HTTPS or localhost; ensure `start()` is called within a user click event. |
+| **HTTP 404 Invalid Embed Token** | Token is misspelled, revoked, or expired | Copy the fresh embed snippet directly from the dashboard after saving configurations. |
+| **No Audio Heard from Agent** | Browser autoplay policy blocked audio playback | Ensure the visitor interacted with the page before call start; widget auto-resumes audio context on click. |
+| **Duplicate Lead Prevention** | Visitor clicked call or submitted form twice within 24 hours | System automatically deduplicates subsequent submissions for the same phone number to prevent spam. |
+

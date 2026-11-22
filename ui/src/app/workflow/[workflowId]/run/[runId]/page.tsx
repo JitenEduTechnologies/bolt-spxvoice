@@ -1,0 +1,498 @@
+'use client';
+
+import { AlertTriangle, Check, Copy, ExternalLink, FileText, Radio, Video } from 'lucide-react';
+import Link from 'next/link';
+import { useParams } from 'next/navigation';
+import posthog from 'posthog-js';
+import { useEffect, useRef, useState } from 'react';
+
+import WorkflowLayout from '@/app/workflow/WorkflowLayout';
+import { getWorkflowRunApiV1WorkflowWorkflowIdRunsRunIdGet } from '@/client/sdk.gen';
+import { MediaPreviewButton, MediaPreviewDialog } from '@/components/MediaPreviewDialog';
+import { OnboardingTooltip } from '@/components/onboarding/OnboardingTooltip';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
+import { ConversationRailFrame, RealtimeFeedback, WorkflowRunLogs } from '@/components/workflow/conversation';
+import { PostHogEvent } from '@/constants/posthog-events';
+import { WORKFLOW_RUN_MODES } from '@/constants/workflowRunModes';
+import { useOnboarding } from '@/context/OnboardingContext';
+import { useAuth } from '@/lib/auth';
+import { downloadFile } from '@/lib/files';
+
+interface WorkflowRunResponse {
+    mode: string;
+    is_completed: boolean;
+    transcript_url: string | null;
+    recording_url: string | null;
+    cost_info: {
+        dograh_token_usage?: number | null;
+        call_duration_seconds?: number | null;
+    } | null;
+    initial_context: Record<string, string | number | boolean | object> | null;
+    gathered_context: Record<string, string | number | boolean | object> | null;
+    logs: WorkflowRunLogs | null;
+    annotations: Record<string, unknown> | null;
+}
+
+const RUN_SHELL_HEIGHT_CLASS = "h-[calc(100svh-49px)] min-h-[calc(100svh-49px)] max-h-[calc(100svh-49px)]";
+
+function formatDuration(seconds?: number | null) {
+    if (seconds == null || Number.isNaN(seconds)) return 'N/A';
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    if (mins === 0) return `${secs}s`;
+    return `${mins}m ${secs}s`;
+}
+
+function getTranscriptMetrics(logs: WorkflowRunLogs | null, gatheredContext: Record<string, string | number | boolean | object> | null) {
+    const events = logs?.realtime_feedback_events ?? [];
+    const userTurns = events.filter((event) => event.type === 'rtf-user-transcription' && event.payload.final).length;
+    const botTurns = events.filter((event) => event.type === 'rtf-bot-text').length;
+    const toolCalls = events.filter((event) => event.type === 'rtf-function-call-end').length;
+    const nodeNames = new Set(
+        events
+            .map((event) => event.payload.node_name)
+            .filter((nodeName): nodeName is string => Boolean(nodeName))
+    );
+    const visitedNodes = Array.isArray(gatheredContext?.nodes_visited)
+        ? gatheredContext.nodes_visited.length
+        : nodeNames.size;
+
+    return { userTurns, botTurns, toolCalls, visitedNodes };
+}
+
+function getStartupError(annotations: Record<string, unknown> | null): string | null {
+    const value = annotations?.livekit_startup_error;
+    return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function getRuntimeMode(initialContext: Record<string, unknown> | null): string | null {
+    const runtime = initialContext?.runtime_configuration;
+    if (runtime && typeof runtime === 'object') {
+        const mode = (runtime as Record<string, unknown>).mode;
+        if (typeof mode === 'string' && mode.trim()) return mode;
+    }
+    return null;
+}
+
+function StartupErrorBanner({ error }: { error: string }) {
+    return (
+        <Card className="border-red-300 bg-red-50 dark:border-red-900 dark:bg-red-950/30">
+            <CardHeader className="flex flex-row items-center gap-2 pb-2">
+                <AlertTriangle className="h-5 w-5 text-red-600 dark:text-red-400" />
+                <CardTitle className="text-lg text-red-900 dark:text-red-100">
+                    Call failed to start
+                </CardTitle>
+            </CardHeader>
+            <CardContent>
+                <p className="text-sm text-red-900 dark:text-red-100">
+                    The LiveKit worker could not start this run. This is usually a
+                    model/provider or runtime configuration problem.
+                </p>
+                <pre className="mt-3 max-h-48 overflow-auto rounded-md bg-red-100 p-3 text-xs text-red-950 dark:bg-red-950/50 dark:text-red-100">
+                    {error}
+                </pre>
+            </CardContent>
+        </Card>
+    );
+}
+
+function RuntimeModeBadge({ mode }: { mode: string }) {
+    const isRealtime = mode === 'realtime';
+    return (
+        <span
+            className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium text-muted-foreground"
+            title="Voice runtime mode used for this run"
+        >
+            <Radio className="h-3 w-3" />
+            {isRealtime ? 'Realtime (speech-to-speech)' : 'Pipeline (STT → LLM → TTS)'}
+        </span>
+    );
+}
+
+function MetricCard({ label, value }: { label: string; value: string }) {
+    return (
+        <div className="rounded-xl border border-border bg-muted/40 px-4 py-3">
+            <p className="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground">{label}</p>
+            <p className="mt-2 text-lg font-semibold text-foreground">{value}</p>
+        </div>
+    );
+}
+
+function RunMetricsSection({
+    costInfo,
+    logs,
+    gatheredContext,
+}: {
+    costInfo: WorkflowRunResponse['cost_info'];
+    logs: WorkflowRunLogs | null;
+    gatheredContext: Record<string, string | number | boolean | object> | null;
+}) {
+    const metrics = getTranscriptMetrics(logs, gatheredContext);
+
+    return (
+        <Card className="border-border">
+            <CardHeader className="pb-3">
+                <CardTitle className="text-lg">Run Metrics</CardTitle>
+            </CardHeader>
+            <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                <MetricCard label="Duration" value={formatDuration(costInfo?.call_duration_seconds)} />
+                <MetricCard
+                    label="Token Usage"
+                    value={costInfo?.dograh_token_usage != null ? costInfo.dograh_token_usage.toLocaleString() : 'N/A'}
+                />
+                <MetricCard label="User Turns" value={String(metrics.userTurns)} />
+                <MetricCard label="Bot Turns" value={String(metrics.botTurns)} />
+                <MetricCard label="Tool Calls" value={String(metrics.toolCalls)} />
+                <MetricCard label="Nodes Visited" value={String(metrics.visitedNodes)} />
+            </CardContent>
+        </Card>
+    );
+}
+
+function ContextDisplay({ title, context }: { title: string; context: Record<string, string | number | boolean | object> | null }) {
+    const [copied, setCopied] = useState(false);
+
+    const handleCopy = () => {
+        if (!context) return;
+        navigator.clipboard.writeText(JSON.stringify(context, null, 2));
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    };
+
+    if (!context || Object.keys(context).length === 0) {
+        return (
+            <Card className="border-border">
+                <CardHeader className="pb-2">
+                    <CardTitle className="text-lg">{title}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                    <p className="text-sm text-muted-foreground">No data available</p>
+                </CardContent>
+            </Card>
+        );
+    }
+
+    return (
+        <Card className="border-border">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle className="text-lg">{title}</CardTitle>
+                <Button variant="ghost" size="sm" onClick={handleCopy} className="gap-2">
+                    {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                    {copied ? 'Copied' : 'Copy'}
+                </Button>
+            </CardHeader>
+            <CardContent>
+                <pre className="text-sm bg-muted p-3 rounded-md overflow-auto max-h-64">
+                    {JSON.stringify(context, null, 2)}
+                </pre>
+            </CardContent>
+        </Card>
+    );
+}
+
+
+export default function WorkflowRunPage() {
+    const params = useParams();
+    const [isLoading, setIsLoading] = useState(true);
+    const auth = useAuth();
+    const [workflowRun, setWorkflowRun] = useState<WorkflowRunResponse | null>(null);
+    const { hasSeenTooltip, markTooltipSeen } = useOnboarding();
+    const customizeButtonRef = useRef<HTMLButtonElement>(null);
+
+    // Redirect if not authenticated
+    useEffect(() => {
+        if (!auth.loading && !auth.isAuthenticated) {
+            auth.redirectToLogin();
+        }
+    }, [auth]);
+
+    const { openPreview, dialog } = MediaPreviewDialog();
+
+    useEffect(() => {
+        const fetchWorkflowRun = async () => {
+            if (!auth.isAuthenticated || auth.loading) return;
+
+            setIsLoading(true);
+            const workflowId = params.workflowId;
+            const runId = params.runId;
+            const response = await getWorkflowRunApiV1WorkflowWorkflowIdRunsRunIdGet({
+                path: {
+                    workflow_id: Number(workflowId),
+                    run_id: Number(runId),
+                },
+            });
+            setIsLoading(false);
+            const runData = {
+                mode: response.data?.mode ?? '',
+                is_completed: response.data?.is_completed ?? false,
+                transcript_url: response.data?.transcript_url ?? null,
+                recording_url: response.data?.recording_url ?? null,
+                cost_info: response.data?.cost_info ?? null,
+                initial_context: response.data?.initial_context as Record<string, string> | null ?? null,
+                gathered_context: response.data?.gathered_context as Record<string, string> | null ?? null,
+                logs: response.data?.logs as WorkflowRunLogs | null ?? null,
+                annotations: response.data?.annotations as Record<string, unknown> | null ?? null,
+            };
+            setWorkflowRun(runData);
+            posthog.capture(PostHogEvent.WORKFLOW_RUN_DETAILS_VIEWED, {
+                workflow_id: Number(workflowId),
+                run_id: Number(runId),
+                is_completed: runData.is_completed,
+                has_recording: !!runData.recording_url,
+                has_transcript: !!runData.transcript_url,
+            });
+        };
+        fetchWorkflowRun();
+    }, [params.workflowId, params.runId, auth]);
+
+    let returnValue = null;
+    const isTextChatRun = workflowRun?.mode === WORKFLOW_RUN_MODES.TEXTCHAT;
+    const showRunDetailsView = Boolean(workflowRun !== null);
+
+    if (isLoading) {
+        returnValue = (
+            <div className="h-full flex items-center justify-center">
+                <div className="w-full max-w-4xl p-6">
+                    <Card>
+                        <CardHeader>
+                            <Skeleton className="h-6 w-48" />
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            <Skeleton className="h-4 w-full" />
+                            <Skeleton className="h-4 w-3/4" />
+                            <Skeleton className="h-4 w-1/2" />
+                        </CardContent>
+                        <CardFooter className="flex gap-4">
+                            <Skeleton className="h-10 w-32" />
+                            <Skeleton className="h-10 w-32" />
+                        </CardFooter>
+                    </Card>
+                </div>
+            </div>
+        );
+    }
+    else if (showRunDetailsView) {
+        returnValue = (
+            <div className={`flex ${RUN_SHELL_HEIGHT_CLASS} min-h-0 w-full overflow-hidden bg-background`}>
+                <div className="min-w-0 flex-1 overflow-y-auto">
+                    <div className="mx-auto w-full max-w-4xl space-y-6 p-6">
+                    <Card className="border-border">
+                        <CardHeader className="flex flex-row items-center justify-between">
+                            <div className="flex items-center gap-4">
+                                <CardTitle className="text-2xl">
+                                    {isTextChatRun
+                                        ? 'Text Chat Session'
+                                        : (getStartupError(workflowRun?.annotations ?? null) || workflowRun?.mode === 'failed')
+                                            ? 'Agent Run Failed'
+                                            : workflowRun?.is_completed
+                                                ? 'Agent Run Completed'
+                                                : 'Agent Run Recorded'}
+                                </CardTitle>
+                                <div className={`h-8 w-8 rounded-full flex items-center justify-center ${
+                                    isTextChatRun 
+                                        ? 'bg-sky-500/15' 
+                                        : (getStartupError(workflowRun?.annotations ?? null) || workflowRun?.mode === 'failed')
+                                            ? 'bg-red-500/20' 
+                                            : workflowRun?.is_completed 
+                                                ? 'bg-emerald-500/20' 
+                                                : 'bg-primary/20'
+                                }`}>
+                                    {isTextChatRun ? (
+                                        <FileText className="h-5 w-5 text-sky-500" />
+                                    ) : (getStartupError(workflowRun?.annotations ?? null) || workflowRun?.mode === 'failed') ? (
+                                        <AlertTriangle className="h-5 w-5 text-red-500" />
+                                    ) : workflowRun?.is_completed ? (
+                                        <Check className="h-5 w-5 text-emerald-500" />
+                                    ) : (
+                                        <FileText className="h-5 w-5 text-primary" />
+                                    )}
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <Link href={`/workflow/${params.workflowId}`}>
+                                    <Button
+                                        ref={customizeButtonRef}
+                                        className="gap-2"
+                                        onClick={() => {
+                                            if (!hasSeenTooltip('customize_workflow')) {
+                                                markTooltipSeen('customize_workflow');
+                                            }
+                                        }}
+                                    >
+                                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                        </svg>
+                                        Customize Agent
+                                    </Button>
+                                </Link>
+                            </div>
+                        </CardHeader>
+                        <CardContent>
+                            {!isTextChatRun && getRuntimeMode(workflowRun?.initial_context ?? null) && (
+                                <div className="mb-4">
+                                    <RuntimeModeBadge
+                                        mode={getRuntimeMode(workflowRun?.initial_context ?? null)!}
+                                    />
+                                </div>
+                            )}
+                            <p className="text-muted-foreground mb-8">
+                                {isTextChatRun
+                                    ? 'Review the conversation history, metrics, and context captured for this text session.'
+                                    : (getStartupError(workflowRun?.annotations ?? null) || workflowRun?.mode === 'failed')
+                                        ? 'This voice agent run encountered an error during execution or startup. Review the diagnostics and logs below.'
+                                        : workflowRun?.is_completed
+                                            ? 'Your voice agent run has been completed. You can preview or download the transcript and recording.'
+                                            : 'Review the captured execution details, node transitions, and diagnostic context for this run.'}
+                            </p>
+
+                            <div className="flex flex-wrap gap-4">
+                                {!isTextChatRun && (
+                                    <>
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-sm text-muted-foreground">Preview:</span>
+                                            <MediaPreviewButton
+                                                recordingUrl={workflowRun?.recording_url}
+                                                transcriptUrl={workflowRun?.transcript_url}
+                                                runId={Number(params.runId)}
+                                                onOpenPreview={openPreview}
+                                            />
+                                        </div>
+                                        <div className="flex items-center gap-2 border-l border-border pl-4">
+                                            <span className="text-sm text-muted-foreground">Download:</span>
+                                            <Button
+                                                onClick={() => downloadFile(workflowRun?.transcript_url ?? null)}
+                                                disabled={!workflowRun?.transcript_url || !auth.isAuthenticated}
+                                                size="sm"
+                                                className="gap-2"
+                                                title={workflowRun?.transcript_url ? "Download transcript" : "No transcript captured for this run"}
+                                                aria-label={workflowRun?.transcript_url ? "Download transcript" : "No transcript captured for this run"}
+                                            >
+                                                <FileText className="h-4 w-4" />
+                                                Transcript
+                                            </Button>
+                                            <Button
+                                                onClick={() => downloadFile(workflowRun?.recording_url ?? null)}
+                                                disabled={!workflowRun?.recording_url || !auth.isAuthenticated}
+                                                size="sm"
+                                                className="gap-2"
+                                                title={workflowRun?.recording_url ? "Download audio recording" : "No audio recording captured for this run"}
+                                                aria-label={workflowRun?.recording_url ? "Download audio recording" : "No audio recording captured for this run"}
+                                            >
+                                                <Video className="h-4 w-4" />
+                                                Recording
+                                            </Button>
+                                        </div>
+                                    </>
+                                )}
+                                {workflowRun?.gathered_context?.trace_url && (
+                                    <div className={`flex items-center gap-2 ${isTextChatRun ? '' : 'border-l border-border pl-4'}`}>
+                                        <span className="text-sm text-muted-foreground">Trace:</span>
+                                        <Button
+                                            asChild
+                                            size="sm"
+                                            variant="outline"
+                                            className="gap-2"
+                                        >
+                                            <a
+                                                href={String(workflowRun.gathered_context.trace_url)}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                            >
+                                                <ExternalLink className="h-4 w-4" />
+                                                View Trace
+                                            </a>
+                                        </Button>
+                                    </div>
+                                )}
+                            </div>
+                        </CardContent>
+                    </Card>
+
+                        {getStartupError(workflowRun?.annotations ?? null) && (
+                            <StartupErrorBanner
+                                error={getStartupError(workflowRun?.annotations ?? null)!}
+                            />
+                        )}
+
+                        <RunMetricsSection
+                            costInfo={workflowRun?.cost_info ?? null}
+                            logs={workflowRun?.logs ?? null}
+                            gatheredContext={workflowRun?.gathered_context ?? null}
+                        />
+
+                        <div className="grid gap-6 md:grid-cols-2">
+                            <ContextDisplay
+                                title="Initial Context"
+                                context={workflowRun?.initial_context ?? null}
+                            />
+                            <ContextDisplay
+                                title="Gathered Context"
+                                context={workflowRun?.gathered_context ?? null}
+                            />
+                        </div>
+
+                        {workflowRun?.annotations && Object.keys(workflowRun.annotations).length > 0 && (
+                            <ContextDisplay
+                                title="QA Results"
+                                context={workflowRun.annotations as Record<string, string | number | boolean | object>}
+                            />
+                        )}
+                    </div>
+                </div>
+
+                <div className="h-full min-h-0 w-[420px] shrink-0 border-l border-border bg-background p-5">
+                    <ConversationRailFrame className="h-full">
+                        <RealtimeFeedback mode="historical" logs={workflowRun?.logs ?? null} />
+                    </ConversationRailFrame>
+                </div>
+            </div>
+        );
+    }
+    else {
+        returnValue = (
+            <div className="flex h-full items-center justify-center p-6">
+                <Card className="w-full max-w-xl border-border">
+                    <CardHeader className="space-y-2">
+                        <CardTitle className="text-2xl">Run Details Unavailable</CardTitle>
+                        <p className="text-sm text-muted-foreground">
+                            This run does not have a details view yet. Go back to the workflow to continue testing or make changes.
+                        </p>
+                    </CardHeader>
+                    <CardFooter>
+                        <Button asChild className="gap-2">
+                            <Link href={`/workflow/${params.workflowId}`}>
+                                Customize Agent
+                            </Link>
+                        </Button>
+                    </CardFooter>
+                </Card>
+            </div>
+        );
+    }
+
+    return (
+        <WorkflowLayout breadcrumbs={[
+            { label: 'Agents', href: '/workflow' },
+            { label: `Agent #${params.workflowId}`, href: `/workflow/${params.workflowId}` },
+            { label: 'Runs', href: `/workflow/${params.workflowId}/runs` },
+            { label: `Run #${params.runId}` },
+        ]}>
+            {returnValue}
+            {dialog}
+
+            {/* Onboarding Tooltip for Customize Workflow */}
+            {showRunDetailsView && (
+                <OnboardingTooltip
+                    title='Customize Your Workflow'
+                    targetRef={customizeButtonRef}
+                    message="Edit your workflow to adjust the voice agent's behavior, add new steps, or modify the conversation flow."
+                    onDismiss={() => markTooltipSeen('customize_workflow')}
+                    showNext={false}
+                    isVisible={!hasSeenTooltip('customize_workflow')}
+                />
+            )}
+        </WorkflowLayout>
+    );
+}

@@ -1,0 +1,76 @@
+import "./globals.css";
+
+import type { Metadata } from "next";
+import { Suspense } from "react";
+
+import { AppErrorBoundary } from "@/components/AppErrorBoundary";
+import ChatwootWidget from "@/components/ChatwootWidget";
+import AppLayout from "@/components/layout/AppLayout";
+import PostHogIdentify from "@/components/PostHogIdentify";
+import SpinLoader from "@/components/SpinLoader";
+import { Toaster } from "@/components/ui/sonner";
+import { AppConfigProvider } from "@/context/AppConfigContext";
+import { OnboardingProvider } from "@/context/OnboardingContext";
+import { TelephonyConfigWarningsProvider } from "@/context/TelephonyConfigWarningsContext";
+import { UserConfigProvider } from "@/context/UserConfigContext";
+import { AuthProvider } from "@/lib/auth";
+
+
+export const metadata: Metadata = {
+  title: "Voice Console",
+  description: "Managed voice-agent operations console",
+};
+
+export default function RootLayout({
+  children
+}: {
+  children: React.ReactNode
+}) {
+
+  return (
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        {/* Inline script to prevent flash of light theme - runs before React hydrates */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                try {
+                  var theme = localStorage.getItem('theme');
+                  if (theme === 'dark' || (!theme && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+                    document.documentElement.classList.add('dark');
+                  } else {
+                    document.documentElement.classList.remove('dark');
+                  }
+                } catch (e) {}
+              })();
+            `,
+          }}
+        />
+      </head>
+      <body
+        className="antialiased">
+        <AppErrorBoundary>
+          <AuthProvider>
+            <AppConfigProvider>
+              <UserConfigProvider>
+                <TelephonyConfigWarningsProvider>
+                  <OnboardingProvider>
+                    <PostHogIdentify />
+                    <AppLayout>
+                      <Suspense fallback={<SpinLoader />}>
+                        {children}
+                      </Suspense>
+                    </AppLayout>
+                    <Toaster />
+                    <ChatwootWidget />
+                  </OnboardingProvider>
+                </TelephonyConfigWarningsProvider>
+              </UserConfigProvider>
+            </AppConfigProvider>
+          </AuthProvider>
+        </AppErrorBoundary>
+      </body>
+    </html>
+  );
+}

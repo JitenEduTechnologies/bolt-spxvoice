@@ -1,0 +1,3215 @@
+"use client";
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import {
+
+
+
+
+
+
+
+  Activity,
+
+
+
+
+
+
+
+  ArrowRight,
+
+
+
+
+
+
+
+  Bot,
+
+
+
+
+
+
+
+  Calendar,
+
+
+
+
+
+
+
+  CheckCircle2,
+
+
+
+
+
+
+
+  Clock,
+
+
+
+
+
+
+
+  Flame,
+
+
+
+
+
+
+
+  Key,
+
+
+
+
+
+
+
+  MessageSquare,
+
+
+
+
+
+
+
+  Phone,
+
+
+
+
+
+
+
+  PhoneCall,
+
+
+
+
+
+
+
+  PhoneIncoming,
+
+
+
+
+
+
+
+  PhoneOutgoing,
+
+
+
+
+
+
+
+  Sparkles,
+
+
+
+
+
+
+
+  TrendingUp,
+
+
+
+
+
+
+
+  UserCheck,
+
+
+
+
+
+
+
+  Users,
+
+
+
+
+
+
+
+  Workflow,
+
+
+
+
+
+
+
+  Zap,
+
+
+
+
+
+
+
+} from "lucide-react";
+
+
+
+
+
+
+
+import Link from "next/link";
+
+
+
+
+
+
+
+import React, { useCallback, useEffect, useRef, useState } from "react";
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import { getWorkflowsApiV1WorkflowFetchGet } from "@/client/sdk.gen";
+
+
+
+
+
+
+
+import { Badge } from "@/components/ui/badge";
+
+
+
+
+
+
+
+import { Button } from "@/components/ui/button";
+
+
+
+
+
+
+
+import {
+
+
+
+
+
+
+
+  Card,
+
+
+
+
+
+
+
+  CardContent,
+
+
+
+
+
+
+
+  CardDescription,
+
+
+
+
+
+
+
+  CardHeader,
+
+
+
+
+
+
+
+  CardTitle,
+
+
+
+
+
+
+
+} from "@/components/ui/card";
+
+
+
+
+
+
+
+import { Skeleton } from "@/components/ui/skeleton";
+
+
+
+
+
+
+
+import { type LocalUser, useAuth } from "@/lib/auth";
+
+
+
+
+
+
+
+import { cn } from "@/lib/utils";
+
+
+
+
+
+
+
+import { useRealtimeDashboard } from "@/hooks/useRealtimeDashboard";
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+interface BusinessOverviewMetrics {
+
+
+
+
+
+
+
+  total_calls: number;
+
+
+
+
+
+
+
+  inbound_calls: number;
+
+
+
+
+
+
+
+  outbound_calls: number;
+
+
+
+
+
+
+
+  answered_calls: number;
+
+
+
+
+
+
+
+  failed_calls: number;
+
+
+
+
+
+
+
+  qualified_leads: number;
+
+
+
+
+
+
+
+  hot_leads: number;
+
+
+
+
+
+
+
+  warm_leads: number;
+
+
+
+
+
+
+
+  cold_leads: number;
+
+
+
+
+
+
+
+  appointment_requests: number;
+
+
+
+
+
+
+
+  confirmed_appointments: number;
+
+
+
+
+
+
+
+  consultations: number;
+
+
+
+
+
+
+
+  callbacks: number;
+
+
+
+
+
+
+
+  human_handovers: number;
+
+
+
+
+
+
+
+  total_calling_minutes: number;
+
+
+
+
+
+
+
+  telecom_calling_minutes?: number;
+
+
+
+
+
+
+
+  simulated_calling_minutes?: number;
+
+
+
+
+
+
+
+  estimated_cost_inr: number;
+
+
+
+
+
+
+
+  simulated_cost_inr?: number;
+
+
+
+
+
+
+
+  simulated_calls_count?: number;
+
+
+
+
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// Tenant-safe component state: Metrics are strictly scoped to the active authenticated session
+
+// to prevent any cross-tenant data leakage or metric flashes between users/organizations.
+
+export default function OverviewPage() {
+
+  const { user, loading: authLoading, provider, getAccessToken } = useAuth();
+
+  const [workflows, setWorkflows] = useState<Array<{ id: number; name: string; created_at: string }>>([]);
+
+  const [metrics, setMetrics] = useState<BusinessOverviewMetrics | null>(null);
+
+  const [loading, setLoading] = useState(true);
+
+  const { subscribe, isConnected } = useRealtimeDashboard();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const canManagePlatform =
+
+
+
+
+
+
+
+    provider === "local" ? Boolean((user as LocalUser | undefined)?.is_superuser) : true;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const fetchData = useCallback(async () => {
+
+
+
+
+
+
+
+    try {
+
+
+
+
+
+
+
+      const token = await getAccessToken();
+
+
+
+
+
+
+
+      const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      // Concurrent fetch for Workflows and Business Overview
+
+
+
+      const [response, metricsRes] = await Promise.all([
+
+
+
+        getWorkflowsApiV1WorkflowFetchGet({}),
+
+
+
+        fetch("/api/v1/business/overview", { headers }),
+
+
+
+      ]);
+
+
+
+
+
+
+
+      if (response?.data) {
+        const raw = response.data as any;
+        const list: Array<{ id: number; name: string; created_at: string }> = Array.isArray(raw) ? raw : (raw?.workflows ?? []);
+        const sorted = [...list].sort((a, b) => (a.id === 1 ? -1 : b.id === 1 ? 1 : 0));
+        const wfList = sorted.slice(0, 5);
+        setWorkflows(wfList);
+      }
+
+
+
+
+
+
+
+      if (metricsRes.ok) {
+
+
+
+        const mData: BusinessOverviewMetrics = await metricsRes.json();
+
+
+
+
+
+        setMetrics(mData);
+
+
+
+      }
+
+
+
+
+
+
+
+    } catch (error) {
+
+
+
+
+
+
+
+      console.error("Failed to fetch overview data:", error);
+
+
+
+
+
+
+
+    } finally {
+
+
+
+
+
+
+
+      setLoading(false);
+
+
+
+
+
+
+
+    }
+
+
+
+
+
+
+
+  }, [getAccessToken]);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  useEffect(() => {
+
+
+
+
+
+
+
+    if (authLoading) return;
+
+
+
+
+
+
+
+    fetchData();
+
+
+
+
+
+
+
+  }, [authLoading, user, fetchData]);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  // Subscribe to real-time events for live dashboard KPI synchronization (Workstream A & T5-02)
+
+
+
+
+
+
+
+  useEffect(() => {
+
+
+
+
+
+
+
+    const unsubscribe = subscribe("*", (event) => {
+
+
+
+
+
+
+
+      if (
+
+
+
+
+
+
+
+        event.event_type.startsWith("call_") ||
+
+
+
+
+
+
+
+        event.event_type.startsWith("lead_") ||
+
+
+
+
+
+
+
+        event.event_type.startsWith("objection_") ||
+
+
+
+
+
+
+
+        event.event_type.startsWith("owner_action_")
+
+
+
+
+
+
+
+      ) {
+
+
+
+
+
+
+
+        fetchData();
+
+
+
+
+
+
+
+      }
+
+
+
+
+
+
+
+    });
+
+
+
+
+
+
+
+    return unsubscribe;
+
+
+
+
+
+
+
+  }, [subscribe, fetchData]);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  const StatCard = ({
+
+
+
+
+
+
+
+    icon: Icon,
+
+
+
+
+
+
+
+    label,
+
+
+
+
+
+
+
+    value,
+
+
+
+
+
+
+
+    subtext,
+
+
+
+
+
+
+
+    gradient,
+
+
+
+
+
+
+
+  }: {
+
+
+
+
+
+
+
+    icon: any;
+
+
+
+
+
+
+
+    label: string;
+
+
+
+
+
+
+
+    value: string | number;
+
+
+
+
+
+
+
+    subtext?: string;
+
+
+
+
+
+
+
+    gradient?: string;
+
+
+
+
+
+
+
+  }) => (
+
+
+
+
+
+
+
+    <Card className="card-hover relative overflow-hidden">
+
+
+
+
+
+
+
+      <div
+
+
+
+
+
+
+
+        className={cn(
+
+
+
+
+
+
+
+          "absolute top-0 right-0 w-32 h-32 rounded-full blur-3xl opacity-10",
+
+
+
+
+
+
+
+          gradient
+
+
+
+
+
+
+
+        )}
+
+
+
+
+
+
+
+      />
+
+
+
+
+
+
+
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+
+
+
+
+
+
+
+        <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+
+
+
+
+
+
+
+          {label}
+
+
+
+
+
+
+
+        </CardTitle>
+
+
+
+
+
+
+
+        <div className={cn("p-2 rounded-xl shadow-sm text-white", gradient)}>
+
+
+
+
+
+
+
+          <Icon className="h-4 w-4" />
+
+
+
+
+
+
+
+        </div>
+
+
+
+
+
+
+
+      </CardHeader>
+
+
+
+
+
+
+
+      <CardContent>
+
+
+
+
+
+
+
+        <div className="text-2xl font-bold tracking-tight">
+
+
+
+
+
+
+
+          {loading ? <Skeleton className="h-8 w-20" /> : value}
+
+
+
+
+
+
+
+        </div>
+
+
+
+
+
+
+
+        {subtext && (
+
+
+
+
+
+
+
+          <p className="text-xs text-muted-foreground mt-1 font-medium">{subtext}</p>
+
+
+
+
+
+
+
+        )}
+
+
+
+
+
+
+
+      </CardContent>
+
+
+
+
+
+
+
+    </Card>
+
+
+
+
+
+
+
+  );
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+  return (
+
+
+
+
+
+
+
+    <div className="container mx-auto px-4 py-8 space-y-8 animate-fade-in-up max-w-7xl">
+
+
+
+
+
+
+
+      {/* Welcome Banner */}
+
+
+
+
+
+
+
+      <div className="relative border-b pb-6">
+
+
+
+
+
+
+
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+
+
+
+
+
+
+
+          <div>
+
+
+
+
+
+
+
+            <div className="flex items-center gap-2 mb-2">
+
+
+
+
+
+
+
+              <Sparkles className="h-4 w-4 text-amber-500" />
+
+
+
+
+
+
+
+              <Badge variant="outline" className="bg-primary/5 text-primary border-primary/20 text-xs">
+
+
+
+
+
+
+
+                Indian Business Voice AI
+
+
+
+
+
+
+
+              </Badge>
+
+
+
+
+
+
+
+              <Badge variant="secondary" className="text-xs">
+
+
+
+
+
+
+
+                VoiceLink + Gemini Live
+
+
+
+
+
+
+
+              </Badge>
+
+
+
+
+
+
+
+            </div>
+
+
+
+
+
+
+
+            <h1 className="text-3xl font-bold tracking-tight">
+
+
+
+
+
+
+
+              {user?.displayName ? (
+
+
+
+
+
+
+
+                <span>
+
+
+
+
+
+
+
+                  Welcome, <span className="text-primary">{user.displayName}</span>
+
+
+
+
+
+
+
+                </span>
+
+
+
+
+
+
+
+              ) : (
+
+
+
+
+
+
+
+                "Business Voice Operations"
+
+
+
+
+
+
+
+              )}
+
+
+
+
+
+
+
+            </h1>
+
+
+
+
+
+
+
+            <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
+
+
+
+
+
+
+
+              Monitor real-time calling activity, AI lead qualification scores, site visits, and customer transcripts.
+
+
+
+
+
+
+
+            </p>
+
+
+
+
+
+
+
+          </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+          <div className="flex items-center gap-2.5">
+
+
+
+
+
+
+
+            <Link href="/agent">
+
+
+
+
+
+
+
+              <Button size="sm" className="gap-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md shadow-blue-500/20">
+
+
+
+
+
+
+
+                <Bot className="h-4 w-4" />
+
+
+
+
+
+
+
+                Train My Agent
+
+
+
+
+
+
+
+              </Button>
+
+
+
+
+
+
+
+            </Link>
+
+
+
+
+
+
+
+            <Link href="/conversations">
+
+
+
+
+
+
+
+              <Button variant="outline" size="sm" className="gap-2">
+
+
+
+
+
+
+
+                <MessageSquare className="h-4 w-4" />
+
+
+
+
+
+
+
+                Conversations
+
+
+
+
+
+
+
+              </Button>
+
+
+
+
+
+
+
+            </Link>
+
+
+
+
+
+
+
+          </div>
+
+
+
+
+
+
+
+        </div>
+
+
+
+
+
+
+
+      </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      {/* Primary Calling & Operations Metrics */}
+
+
+
+
+
+
+
+      <div className="space-y-3">
+
+
+
+
+
+
+
+        <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+
+
+
+
+
+
+
+          Calling Operations & Volume
+
+
+
+
+
+
+
+        </h2>
+
+
+
+
+
+
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+
+
+
+
+
+
+
+          <StatCard
+
+
+
+
+
+
+
+            icon={PhoneCall}
+
+
+
+
+
+
+
+            label="Total Calls"
+
+
+
+
+
+
+
+            value={metrics?.total_calls ?? 0}
+
+
+
+
+
+
+
+            subtext={`${metrics?.inbound_calls ?? 0} Inbound • ${metrics?.outbound_calls ?? 0} Outbound`}
+
+
+
+
+
+
+
+            gradient="bg-gradient-to-br from-blue-500 to-blue-600"
+
+
+
+
+
+
+
+          />
+
+
+
+
+
+
+
+          <StatCard
+
+
+
+
+
+
+
+            icon={CheckCircle2}
+
+
+
+
+
+
+
+            label="Answered Calls"
+
+
+
+
+
+
+
+            value={metrics?.answered_calls ?? 0}
+
+
+
+
+
+
+
+            subtext={`${metrics?.failed_calls ?? 0} missed or failed`}
+
+
+
+
+
+
+
+            gradient="bg-gradient-to-br from-emerald-500 to-teal-600"
+
+
+
+
+
+
+
+          />
+
+
+
+
+
+
+
+          <StatCard
+
+
+
+
+
+
+
+            icon={Clock}
+
+
+
+
+
+
+
+            label="Calling Minutes"
+
+
+
+
+
+
+
+            value={`${metrics?.telecom_calling_minutes ?? 0}m real`}
+
+
+
+
+
+
+
+            subtext={
+
+
+
+
+
+
+
+              (metrics?.simulated_calling_minutes ?? 0) > 0
+
+
+
+
+
+
+
+                ? `${metrics?.simulated_calling_minutes}m simulated • Spend: ₹${metrics?.estimated_cost_inr ?? 0}`
+
+
+
+
+
+
+
+                : `Actual telecom spend: ₹${metrics?.estimated_cost_inr ?? 0}`
+
+
+
+
+
+
+
+            }
+
+
+
+
+
+
+
+            gradient="bg-gradient-to-br from-amber-500 to-orange-500"
+
+
+
+
+
+
+
+          />
+
+
+
+
+
+
+
+          <StatCard
+
+
+
+
+
+
+
+            icon={UserCheck}
+
+
+
+
+
+
+
+            label="Human Handovers"
+
+
+
+
+
+
+
+            value={metrics?.human_handovers ?? 0}
+
+
+
+
+
+
+
+            subtext={`${metrics?.callbacks ?? 0} callbacks requested`}
+
+
+
+
+
+
+
+            gradient="bg-gradient-to-br from-purple-500 to-violet-600"
+
+
+
+
+
+
+
+          />
+
+
+
+
+
+
+
+        </div>
+
+
+
+
+
+
+
+      </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      {/* AI Lead Intelligence & Appointment Conversion */}
+
+
+
+
+
+
+
+      <div className="space-y-3">
+
+
+
+
+
+
+
+        <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+
+
+
+
+
+
+
+          AI Lead Intelligence & Bookings
+
+
+
+
+
+
+
+        </h2>
+
+
+
+
+
+
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+
+
+
+
+
+
+
+          <StatCard
+
+
+
+
+
+
+
+            icon={TrendingUp}
+
+
+
+
+
+
+
+            label="Qualified Leads"
+
+
+
+
+
+
+
+            value={metrics?.qualified_leads ?? 0}
+
+
+
+
+
+
+
+            subtext="Intent & requirements captured"
+
+
+
+
+
+
+
+            gradient="bg-gradient-to-br from-indigo-500 to-blue-600"
+
+
+
+
+
+
+
+          />
+
+
+
+
+
+
+
+          <StatCard
+
+
+
+
+
+
+
+            icon={Flame}
+
+
+
+
+
+
+
+            label="Hot Leads (Score 75+)"
+
+
+
+
+
+
+
+            value={metrics?.hot_leads ?? 0}
+
+
+
+
+
+
+
+            subtext="Ready to buy / book site visit"
+
+
+
+
+
+
+
+            gradient="bg-gradient-to-br from-rose-500 to-red-600"
+
+
+
+
+
+
+
+          />
+
+
+
+
+
+
+
+          <StatCard
+
+
+
+
+
+
+
+            icon={Users}
+
+
+
+
+
+
+
+            label="Warm Leads"
+
+
+
+
+
+
+
+            value={metrics?.warm_leads ?? 0}
+
+
+
+
+
+
+
+            subtext="Nurturing / follow-up queue"
+
+
+
+
+
+
+
+            gradient="bg-gradient-to-br from-amber-500 to-yellow-600"
+
+
+
+
+
+
+
+          />
+
+
+
+
+
+
+
+          <StatCard
+
+
+
+
+
+
+
+            icon={Calendar}
+
+
+
+
+
+
+
+            label="Appointments Booked"
+
+
+
+
+
+
+
+            value={metrics?.appointment_requests ?? 0}
+
+
+
+
+
+
+
+            subtext={`${metrics?.confirmed_appointments ?? 0} confirmed by staff`}
+
+
+
+
+
+
+
+            gradient="bg-gradient-to-br from-cyan-500 to-blue-600"
+
+
+
+
+
+
+
+          />
+
+
+
+
+
+
+
+        </div>
+
+
+
+
+
+
+
+      </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      {/* Business Actions Quick Access */}
+
+
+
+
+
+
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+
+
+
+
+
+
+
+        <Card className="card-hover">
+
+
+
+
+
+
+
+          <CardHeader className="pb-3">
+
+
+
+
+
+
+
+            <div className="flex items-center gap-3">
+
+
+
+
+
+
+
+              <div className="bg-primary/10 p-2.5 rounded-xl text-primary">
+
+
+
+
+
+
+
+                <Bot className="h-5 w-5" />
+
+
+
+
+
+
+
+              </div>
+
+
+
+
+
+
+
+              <div>
+
+
+
+
+
+
+
+                <CardTitle className="text-base">Train My AI Agent</CardTitle>
+
+
+
+
+
+
+
+                <CardDescription className="text-xs">Universal industry presets & multi-language scripts</CardDescription>
+
+
+
+
+
+
+
+              </div>
+
+
+
+
+
+
+
+            </div>
+
+
+
+
+
+
+
+          </CardHeader>
+
+
+
+
+
+
+
+          <CardContent className="space-y-3">
+
+
+
+
+
+
+
+            <p className="text-xs text-muted-foreground">
+
+
+
+
+
+
+
+              Customize products, pricing, Telugu/Hindi rules, qualification criteria, and publish directly to live runtime.
+
+
+
+
+
+
+
+            </p>
+
+
+
+
+
+
+
+            <Link href="/agent" className="block">
+
+
+
+
+
+
+
+              <Button variant="outline" size="sm" className="w-full justify-between">
+
+
+
+
+
+
+
+                <span>Open Training Studio</span>
+
+
+
+
+
+
+
+                <ArrowRight className="h-4 w-4" />
+
+
+
+
+
+
+
+              </Button>
+
+
+
+
+
+
+
+            </Link>
+
+
+
+
+
+
+
+          </CardContent>
+
+
+
+
+
+
+
+        </Card>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <Card className="card-hover">
+
+
+
+
+
+
+
+          <CardHeader className="pb-3">
+
+
+
+
+
+
+
+            <div className="flex items-center gap-3">
+
+
+
+
+
+
+
+              <div className="bg-rose-500/10 p-2.5 rounded-xl text-rose-600">
+
+
+
+
+
+
+
+                <Sparkles className="h-5 w-5" />
+
+
+
+
+
+
+
+              </div>
+
+
+
+
+
+
+
+              <div>
+
+
+
+
+
+
+
+                <CardTitle className="text-base">AI Lead CRM</CardTitle>
+
+
+
+
+
+
+
+                <CardDescription className="text-xs">Hot/Warm lead scores with transcript quotes</CardDescription>
+
+
+
+
+
+
+
+              </div>
+
+
+
+
+
+
+
+            </div>
+
+
+
+
+
+
+
+          </CardHeader>
+
+
+
+
+
+
+
+          <CardContent className="space-y-3">
+
+
+
+
+
+
+
+            <p className="text-xs text-muted-foreground">
+
+
+
+
+
+
+
+              Review extracted customer budget, timeline, objections, and assign next actions to sales team.
+
+
+
+
+
+
+
+            </p>
+
+
+
+
+
+
+
+            <Link href="/leads" className="block">
+
+
+
+
+
+
+
+              <Button variant="outline" size="sm" className="w-full justify-between">
+
+
+
+
+
+
+
+                <span>View Qualified Leads</span>
+
+
+
+
+
+
+
+                <ArrowRight className="h-4 w-4" />
+
+
+
+
+
+
+
+              </Button>
+
+
+
+
+
+
+
+            </Link>
+
+
+
+
+
+
+
+          </CardContent>
+
+
+
+
+
+
+
+        </Card>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        <Card className="card-hover">
+
+
+
+
+
+
+
+          <CardHeader className="pb-3">
+
+
+
+
+
+
+
+            <div className="flex items-center gap-3">
+
+
+
+
+
+
+
+              <div className="bg-emerald-500/10 p-2.5 rounded-xl text-emerald-600">
+
+
+
+
+
+
+
+                <Calendar className="h-5 w-5" />
+
+
+
+
+
+
+
+              </div>
+
+
+
+
+
+
+
+              <div>
+
+
+
+
+
+
+
+                <CardTitle className="text-base">Appointments & Visits</CardTitle>
+
+
+
+
+
+
+
+                <CardDescription className="text-xs">Time slots booked during phone calls</CardDescription>
+
+
+
+
+
+
+
+              </div>
+
+
+
+
+
+
+
+            </div>
+
+
+
+
+
+
+
+          </CardHeader>
+
+
+
+
+
+
+
+          <CardContent className="space-y-3">
+
+
+
+
+
+
+
+            <p className="text-xs text-muted-foreground">
+
+
+
+
+
+
+
+              Track requested site visits, doctor consultations, or workout trial slots with status updates.
+
+
+
+
+
+
+
+            </p>
+
+
+
+
+
+
+
+            <Link href="/appointments" className="block">
+
+
+
+
+
+
+
+              <Button variant="outline" size="sm" className="w-full justify-between">
+
+
+
+
+
+
+
+                <span>Manage Appointments</span>
+
+
+
+
+
+
+
+                <ArrowRight className="h-4 w-4" />
+
+
+
+
+
+
+
+              </Button>
+
+
+
+
+
+
+
+            </Link>
+
+
+
+
+
+
+
+          </CardContent>
+
+
+
+
+
+
+
+        </Card>
+
+
+
+
+
+
+
+      </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      {/* Recent Agents & Workflows */}
+
+
+
+
+
+
+
+      {workflows.length > 0 && (
+
+
+
+
+
+
+
+        <Card className="card-hover">
+
+
+
+
+
+
+
+          <CardHeader>
+
+
+
+
+
+
+
+            <div className="flex items-center justify-between">
+
+
+
+
+
+
+
+              <div>
+
+
+
+
+
+
+
+                <CardTitle className="text-lg">Deployed Voice Workflows</CardTitle>
+
+
+
+
+
+
+
+                <CardDescription className="text-xs">Underlying workflow graphs running LiveKit workers</CardDescription>
+
+
+
+
+
+
+
+              </div>
+
+
+
+
+
+
+
+              <Link href="/workflow">
+
+
+
+
+
+
+
+                <Button variant="ghost" size="sm" className="gap-1.5 text-xs">
+
+
+
+
+
+
+
+                  View Graph Editor
+
+
+
+
+
+
+
+                  <ArrowRight className="h-3.5 w-3.5" />
+
+
+
+
+
+
+
+                </Button>
+
+
+
+
+
+
+
+              </Link>
+
+
+
+
+
+
+
+            </div>
+
+
+
+
+
+
+
+          </CardHeader>
+
+
+
+
+
+
+
+          <CardContent>
+
+
+
+
+
+
+
+            <div className="space-y-2.5">
+
+
+
+
+
+
+
+              {workflows.map((workflow) => (
+
+
+
+
+
+
+
+                <Link
+
+
+
+
+
+
+
+                  key={workflow.id}
+
+
+
+
+
+
+
+                  href={`/workflow/${workflow.id}`}
+
+
+
+
+
+
+
+                  className="group flex items-center justify-between p-3.5 rounded-xl border border-border/50 hover:bg-accent/50 transition-all"
+
+
+
+
+
+
+
+                >
+
+
+
+
+
+
+
+                  <div className="flex items-center gap-3">
+
+
+
+
+
+
+
+                    <div className="bg-primary/10 text-primary p-2.5 rounded-lg group-hover:scale-105 transition-transform">
+
+
+
+
+
+
+
+                      <Bot className="h-4 w-4" />
+
+
+
+
+
+
+
+                    </div>
+
+
+
+
+
+
+
+                    <div>
+
+
+
+
+
+
+
+                      <p className="font-semibold text-sm group-hover:text-primary transition-colors">
+
+
+
+
+
+
+
+                        {workflow.name}
+
+
+
+
+
+
+
+                      </p>
+
+
+
+
+
+
+
+                      <p className="text-xs text-muted-foreground">
+
+
+
+
+
+
+
+                        Workflow ID #{workflow.id}
+
+
+
+
+
+
+
+                      </p>
+
+
+
+
+
+
+
+                    </div>
+
+
+
+
+
+
+
+                  </div>
+
+
+
+
+
+
+
+                  <Button variant="ghost" size="sm" className="text-xs gap-1">
+
+
+
+
+
+
+
+                    Open Workflow
+
+
+
+
+
+
+
+                    <ArrowRight className="h-3.5 w-3.5" />
+
+
+
+
+
+
+
+                  </Button>
+
+
+
+
+
+
+
+                </Link>
+
+
+
+
+
+
+
+              ))}
+
+
+
+
+
+
+
+            </div>
+
+
+
+
+
+
+
+          </CardContent>
+
+
+
+
+
+
+
+        </Card>
+
+
+
+
+
+
+
+      )}
+
+
+
+
+
+
+
+    </div>
+
+
+
+
+
+
+
+  );
+
+
+
+
+
+
+
+}
+
+
+
+

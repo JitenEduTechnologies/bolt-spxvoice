@@ -1,0 +1,93 @@
+SNAPSHOT SECRET SCAN (values never recorded; file:line:category only)
+files scanned: 1239  total bytes: 17490895  max file: 3870016 bytes (api/native/rnnoise/librnnoise.so.0.4.1)
+filename-pattern matches (names suggest secrets, content not necessarily): 30
+  NAME  api/alembic/versions/181475b2a1a1_add_public_access_token.py
+  NAME  api/alembic/versions/2f638891cbb6_add_workflow_run_text_sessions.py
+  NAME  api/alembic/versions/36b5dbf670e4_add_external_credentials_model.py
+  NAME  api/alembic/versions/6fd8fac02883_add_user_email_and_password.py
+  NAME  api/alembic/versions/b7c4d8e9f012_merge_livekit_kb_text_session_heads.py
+  NAME  api/alembic/versions/e02f387b7538_add_embed_token_model.py
+  NAME  api/db/embed_token_client.py
+  NAME  api/db/webhook_credential_client.py
+  NAME  api/db/workflow_run_text_session_client.py
+  NAME  api/routes/credentials.py
+  NAME  api/routes/turn_credentials.py
+  NAME  api/scripts/config_secrets_maintenance.py
+  NAME  api/scripts/emergency_decrypt_telephony_credentials.py
+  NAME  api/scripts/migrate_encrypt_telephony_credentials.py
+  NAME  api/scripts/reset_admin_password.py
+  NAME  api/services/configuration/node_secrets.py
+  NAME  api/services/configuration/override_secrets.py
+  NAME  api/services/workflow/mcp_tool_session.py
+  NAME  api/services/workflow/text_chat_session_service.py
+  NAME  api/tests/test_config_secret_hardening.py
+  NAME  api/tests/test_gate2_secret_redaction.py
+  NAME  api/tests/test_is_private_ip_candidate.py
+  NAME  api/tests/test_mcp_tool_session.py
+  NAME  api/tests/test_p1_node_secrets_and_endpoints.py
+  NAME  api/tests/test_text_chat_session_service.py
+  NAME  api/utils/credential_auth.py
+  NAME  docs/developer/secret-storage.md
+  NAME  ui/src/app/workflow/[workflowId]/components/workflow-tester/useTextChatSession.ts
+  NAME  ui/src/components/http/create-credential-dialog.tsx
+  NAME  ui/src/components/http/credential-selector.tsx
+content hits needing REVIEW: 33
+  REVIEW api/services/livekit/post_call.py:17: secret-like assignment
+  REVIEW api/services/livekit/post_call.py:18: secret-like assignment
+  REVIEW api/tests/test_gate2_secret_redaction.py:80: bearer token literal
+  REVIEW api/tests/test_gate2_secret_redaction.py:80: openai-style key
+  REVIEW api/tests/test_gate2_secret_redaction.py:103: bearer token literal
+  REVIEW api/tests/test_gate2_secret_redaction.py:103: openai-style key
+  REVIEW api/tests/test_gate2_secret_redaction.py:139: bearer token literal
+  REVIEW api/tests/test_gate2_secret_redaction.py:139: openai-style key
+  REVIEW api/tests/test_livekit_startup_redaction.py:38: openai-style key
+  REVIEW api/tests/test_masked_key_rejection.py:34: openai-style key
+  REVIEW api/tests/test_mcp_tool_route.py:158: secret-like assignment
+  REVIEW api/tests/test_meta_whatsapp_adapter.py:148: bearer token literal
+  REVIEW api/tests/test_meta_whatsapp_adapter.py:448: secret-like assignment
+  REVIEW api/tests/test_meta_whatsapp_webhook_and_settings.py:201: secret-like assignment
+  REVIEW api/tests/test_meta_whatsapp_webhook_and_settings.py:313: secret-like assignment
+  REVIEW api/tests/test_meta_whatsapp_webhook_and_settings.py:391: secret-like assignment
+  REVIEW api/tests/test_phase_c2_safety_corrections.py:64: secret-like assignment
+  REVIEW api/tests/test_phase_c3_health_monitoring.py:269: secret-like assignment
+  REVIEW api/tests/test_stage1a_security.py:212: secret-like assignment
+  REVIEW api/tests/test_stage1b_blocker_fixes.py:175: secret-like assignment
+  REVIEW api/tests/test_stage1b_blocker_fixes.py:187: provider credential literal
+  REVIEW api/tests/test_voice01_interruption.py:1122: credentialed db/redis url
+  REVIEW api/tests/test_voice01_interruption.py:1385: google/gemini api key
+  REVIEW api/tests/test_workflow_qa_masking.py:58: openai-style key
+  REVIEW api/tests/test_workflow_qa_masking.py:71: openai-style key
+  REVIEW api/tests/test_workflow_qa_masking.py:123: secret-like assignment
+  REVIEW api/tests/test_workflow_qa_masking.py:124: secret-like assignment
+  REVIEW api/tests/test_workflow_qa_masking.py:156: openai-style key
+  REVIEW api/tests/test_workflow_qa_masking.py:168: openai-style key
+  REVIEW api/tests/test_workflow_qa_masking.py:169: openai-style key
+  REVIEW api/tests/test_workflow_qa_masking.py:201: secret-like assignment
+  REVIEW api/tests/test_workflow_qa_masking.py:270: openai-style key
+  REVIEW ui/tests/real_browser_test.mjs:144: bearer token literal
+placeholder/synthetic-looking hits (auto-classified, not listed individually): 26 {'credentialed db/redis url': 26}
+  placeholder-ish  docker-compose.yaml x4
+  placeholder-ish  api/routes/business.py x3
+  placeholder-ish  .env.example x2
+  placeholder-ish  docker-compose.coolify.yaml x2
+  placeholder-ish  accept/check-runtime-readiness.ps1 x2
+  placeholder-ish  accept/env.accept.example x2
+  placeholder-ish  accept/health-check.ps1 x2
+  placeholder-ish  evidence/remediation/checkpoint-livekit-startup-redaction-ACCEPTED.md x2
+  placeholder-ish  evidence/remediation/checkpoint-livekit-startup-redaction-final.md x2
+  placeholder-ish  AGENTS.md x1
+  placeholder-ish  .github/workflows/api-tests.yml x1
+  placeholder-ish  .github/workflows/pre-pr-drift-check.yml x1
+  placeholder-ish  api/tests/test_circuit_breaker_p1_acceptance.py x1
+  placeholder-ish  api/tests/test_gate2_secret_redaction.py x1
+
+=== FINAL AUDIT (2026-11-22, after ALL documentation images were intentionally excluded) ===
+docs/images/ present: False; docs/favicon.ico, docs/logo present: False
+documentation binary/image assets remaining (docs/, README, evidence/): []
+other image/binary files remaining (application UI source assets only): ['api/native/rnnoise/librnnoise.so.0.4.1', 'ui/public/axiom_icon.svg', 'ui/public/file.svg', 'ui/public/globe.svg', 'ui/public/langfuse_icon.svg', 'ui/public/next.svg', 'ui/public/vercel.svg', 'ui/public/window.svg', 'ui/src/app/favicon.ico']
+exclusion audit violations: 0 []
+.git present: False
+env-style files (safe examples only): ['.env.example', 'accept/env.accept.example', 'ui/.env.example']
+files: 1239  total bytes: 17486221 (16.7 MB)  max file: 3870016 bytes (api/native/rnnoise/librnnoise.so.0.4.1); GitHub 100MB limit exceeded: False
+manifest entries: 1238  mismatches: 0  extra files: 0  missing files: 0
+Gate 2 OPEN in handoff: True; acceptance header: True; WIP/not production-ready stated: True
